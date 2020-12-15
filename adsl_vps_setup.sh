@@ -108,7 +108,7 @@ request_header_access X-Forwarded-For deny all
 service squid restart
 
 # 配置ufw
-ufw enable 
+yes | ufw enable 
 ufw default allow outgoing 
 ufw default deny incoming 
 ufw allow http 
