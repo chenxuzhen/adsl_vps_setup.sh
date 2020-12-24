@@ -1,15 +1,41 @@
+
 #/usr/bin/bash
+sed -i "s/Port 3389/#Port 3389/" /etc/ssh/sshd_config
+service sshd restart
+
+# 时间同步很重要，不然没法判断代理IP存活时间
+cd /etc/yum.repos.d/
+
+mv /etc/yum.repos.d/CentOS-Base.repo /etc/yum.repos.d/CentOS-Base.repo.backup
+mv /etc/yum.repos.d/epel.repo /etc/yum.repos.d/epel.repo.backup
+# wget -O /etc/yum.repos.d/CentOS-Base.repo http://mirrors.aliyun.com/repo/Centos-7.repo 
+curl -o /etc/yum.repos.d/CentOS-Base.repo https://mirrors.aliyun.com/repo/Centos-7.repo
+curl -O  http://mirrors.aliyun.com/repo/epel-7.repo
+sed -i -e '/mirrors.cloud.aliyuncs.com/d' -e '/mirrors.aliyuncs.com/d' /etc/yum.repos.d/CentOS-Base.repo
+
+yum clean all
+yum makecache
+cd ~/
+yum install -y ntpdate
+yum -y install wget
+cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+yes | cp -f /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+ntpdate cn.pool.ntp.org
+crontab -l >/tmp/crontab.bak
+echo "*/10 * * * * /usr/sbin/ntpdate cn.pool.ntp.org | logger -t NTP" >> /tmp/crontab.bak
+crontab /tmp/crontab.bak
+
 yum update -y
 yum install epel-release -y
 yum install --enablerepo="epel" ufw -y
 yum install python3 -y
 
 # 配置pip国内源
-mkdir .pip && cd .pip && touch pip.conf
+mkdir ~/.pip && cd .pip && touch pip.conf
 echo "
 [global]
 index-url = https://mirrors.aliyun.com/pypi/simple
-" > pip.conf
+" > ~/.pip/pip.conf
 cd ~/
 
 # 安装denyhosts
@@ -83,7 +109,7 @@ http_access allow czhen
 #http_access deny all
 
 # Squid normally listens to port 3128
-http_port 3128
+http_port 3389
 
 # Uncomment and adjust the following to add a disk cache directory.
 #cache_dir ufs /var/spool/squid 100 16 256
@@ -105,7 +131,8 @@ refresh_pattern .		0	20%	4320
 request_header_access Via deny all
 request_header_access X-Forwarded-For deny all
 " > /etc/squid/squid.conf
-service squid restart
+sudo systemctl enable squid
+service squid start
 
 # 配置ufw
 yes | ufw enable 
@@ -114,9 +141,7 @@ ufw default deny incoming
 ufw allow http 
 ufw allow 22
 ufw allow 5900
-ufw allow 3128
-# ufw allow from ******
-
+ufw allow 3389
 ufw status
 
 # 配置github访问
@@ -142,7 +167,24 @@ echo "
 199.232.96.133    avatars8.githubusercontent.com
 # GitHub End
 " >> /etc/hosts
+cd /root/AdslProxy/
+read -p "Enter adsl client name. eg. adsl1 or adsl2: " adsl
+sudo sed -i "s/adsl1/"$adsl"/" /root/AdslProxy/adslproxy/settings.py
+sudo sed -i "s/22457/"$adsl"/" /root/AdslProxy/adslproxy/sender/sender.py
+yes | python3 /root/AdslProxy/setup.py install
+echo 'copy service.sh to /etc/init.d'
+cp /root/AdslProxy/service.sh /etc/init.d/ && chmod 777 /etc/init.d/service.sh
+echo 'bash /etc/init.d/service.sh' >> /etc/rc.local
+sudo service firewalld start
+sudo firewall-cmd --permanent --add-port=3389/tcp
+firewall-cmd --zone=public --add-port=22/tcp --permanent
+firewall-cmd --zone=public --add-port=30050/tcp --permanent
+
+firewall-cmd --reload
+sudo service firewalld restart
+sudo service squid restart
+sudo systemctl enable firewalld
 echo 'you need to RUN htpasswd -c /etc/squid/passwd czhen   to set passwd for squid'
-echo 'check if squid proxy works and start adslproxy send'
-
-
+echo 'check if squid proxy works and start adslproxy send.'
+htpasswd -c /etc/squid/passwd czhen
+echo 'double check adslproxy settings.py. make sure adsl client name is setup as expected'
